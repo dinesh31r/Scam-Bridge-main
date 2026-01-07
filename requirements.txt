@@ -1,0 +1,9 @@
+streamlit
+pandas
+scikit-learn
+numpy
+nltk
+torch
+transformers
+google-genai
+openai

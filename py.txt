@@ -1,0 +1,343 @@
+import streamlit as st
+import pandas as pd
+import pickle
+import os
+import numpy as np
+import io  # For handling the CSV download buffer
+from functions.preprocess import clean_and_stem
+from sklearn.metrics import confusion_matrix, accuracy_score, classification_report
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# STREAMLIT CONFIG (must run before any other Streamlit API usage)
+st.set_page_config(page_title="Scam-Bridge Analytica", layout="wide", initial_sidebar_state="auto")
+
+# ==============================================================
+# 0. CONFIGURATION & CORE LOGIC
+# ==============================================================
+
+# 0.1 LLM Setup (Gemini)
+try:
+    import google.generativeai as genai
+    HAVE_GENAI = True
+except ImportError:
+    HAVE_GENAI = False
+
+# Read key from the environment (do NOT hard-code keys into source)
+GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+
+# Initialize chat availability flag. We configure the SDK here but avoid
+# making a live test generation during import to prevent attribute mismatches
+# across differing SDK versions. The app will call the SDK when the user
+# sends a chat message and we handle errors there.
+CHAT_ENABLED = False
+if HAVE_GENAI and GEMINI_KEY:
+    try:
+        genai.configure(api_key=GEMINI_KEY)
+        CHAT_ENABLED = True
+        print("Gemini client configured (api key not printed).")
+    except Exception as e:
+        print(f"Gemini initialization failed: {e}")
+        CHAT_ENABLED = False
+else:
+    CHAT_ENABLED = False
+
+
+def call_gemini_chat(prompt: str) -> str:
+    """Send prompt to Gemini and return a text response."""
+    if not CHAT_ENABLED:
+        return "Error: Chatbot is disabled (missing API key or SDK initialization failed)."
+
+    try:
+        # Create a proper chat context with system prompt
+        system_prompt = (
+            "You are a factual, objective, and politically neutral assistant. "
+            "Answer briefly and factually about politics and current events. "
+            "Do not provide opinions or perform sentiment analysis."
+        )
+
+        # Try the chat.create API first (preferred)
+        if hasattr(genai, "chat") and hasattr(genai.chat, "create"):
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ]
+            resp = genai.chat.create(model="gemini-pro", messages=messages)
+            if hasattr(resp, "content"):
+                return resp.content
+            return str(resp)
+
+        # Fallback to GenerativeModel API
+        model = genai.GenerativeModel("gemini-pro")
+        response = model.generate_content(system_prompt + "\n\nUser: " + prompt)
+        return response.text if hasattr(response, "text") else str(response)
+
+    except Exception as e:
+        return f"⚠️ Error while calling Gemini: {str(e)}"
+
+
+# ... (Rest of the code continues from 0.2) ...
+
+# 0.2 ML Artifact Paths
+MODEL_PATH = os.path.join("models", "final_model.pkl")
+VECTORIZER_PATH = os.path.join("models", "vectorizer.pkl")
+LABELED_DATA_PATH = os.path.join("data", "labeled_political_tweets.csv")
+TWEET_COLUMN = 'Tweet'
+LABEL_COLUMN = 'sentiment'
+
+# 0.3 Core Model/Data Loading
+@st.cache_resource
+def load_artifacts():
+    """Loads the model, vectorizer, and labeled data, caching them."""
+    try:
+        model = pickle.load(open(MODEL_PATH, 'rb'))
+        vectorizer = pickle.load(open(VECTORIZER_PATH, 'rb'))
+        data = pd.read_csv(LABELED_DATA_PATH)
+        return model, vectorizer, data
+    except FileNotFoundError as e:
+        st.error(f"Required file not found: {e}. Please ensure you have run 'model_trainer.py'.")
+        st.stop()
+    except Exception as e:
+        st.error(f"Error loading artifacts: {e}")
+        st.stop()
+
+# 0.4 Prediction and Display Functions (Shared)
+model, vectorizer, data = load_artifacts()
+LABELS = model.classes_
+
+def predict_tweet(text):
+    """Cleans, vectorizes, and predicts the sentiment of a single tweet."""
+    cleaned_text = clean_and_stem(text)
+    if not cleaned_text.strip():
+        return "neutral", 0.5
+        
+    vectorized_text = vectorizer.transform([cleaned_text])
+    prediction = model.predict(vectorized_text)[0]
+    
+    if hasattr(model, 'predict_proba'):
+        proba = model.predict_proba(vectorized_text)
+        confidence = np.max(proba)
+    else:
+        confidence = 1.0
+
+    return prediction, confidence
+
+def display_prediction(prediction, confidence):
+    """Displays the prediction result with color and emoji."""
+    if prediction == 'positive':
+        st.success(f"😊 Predicted Sentiment: POSITIVE (Confidence: {confidence:.2f})")
+    elif prediction == 'negative':
+        st.error(f"❌ Predicted Sentiment: NEGATIVE (Confidence: {confidence:.2f})")
+    elif prediction == 'neutral':
+        st.warning(f"😐 Predicted Sentiment: NEUTRAL (Confidence: {confidence:.2f})")
+    else:
+        st.info(f"❓ Predicted Label: {prediction} (Confidence: {confidence:.2f})")
+
+
+# ==============================================================
+# 1. STREAMLIT CONFIGURATION
+# ==============================================================
+st.title("🤡.Scam-Bridge Analytica")
+st.markdown("---")
+
+
+# ==============================================================
+# 1. INDIVIDUAL TWEET PREDICTION
+# ==============================================================
+st.header("1. Real-Time Tweet Sentiment Prediction")
+st.markdown("Enter a political statement or tweet to see its predicted sentiment using our trained model.")
+
+user_input = st.text_area("✍️ Enter Tweet Text:", height=100, placeholder="Example: The new policy proposal is the worst decision this year.")
+
+if st.button("🔍 Analyze Sentiment", key="analyze_single", use_container_width=True):
+    if user_input.strip():
+        prediction, confidence = predict_tweet(user_input)
+        display_prediction(prediction, confidence)
+    else:
+        st.warning("Please enter some text to analyze.")
+
+st.markdown("---")
+
+
+# ==============================================================
+# 2. BULK DATASET ANALYSIS
+# ==============================================================
+st.header("2. Bulk CSV Sentiment Analysis")
+st.markdown("Upload a CSV file to analyze sentiment across multiple tweets and download the results.")
+
+uploaded_file = st.file_uploader("Upload your CSV file", type=['csv'])
+
+if uploaded_file is not None:
+    # 1. Load the uploaded file
+    bulk_df = pd.read_csv(uploaded_file)
+    st.success(f"File uploaded successfully! Loaded {len(bulk_df)} rows.")
+
+    # 2. Let user specify the text column
+    col_options = bulk_df.columns.tolist()
+    text_col = st.selectbox("Select the column containing the text/tweets:", col_options)
+
+    if st.button("🚀 Run Bulk Analysis", key="run_bulk", use_container_width=True):
+        if text_col not in bulk_df.columns:
+            st.error(f"Column '{text_col}' not found in the uploaded data.")
+            st.stop()
+
+        with st.spinner(f"Analyzing {len(bulk_df)} rows..."):
+            # Prepare data: fill any NaNs and apply cleaning
+            texts_to_analyze = bulk_df[text_col].fillna("").astype(str)
+            cleaned_texts = texts_to_analyze.apply(clean_and_stem)
+
+            # Perform prediction
+            X_vec = vectorizer.transform(cleaned_texts)
+            predictions = model.predict(X_vec)
+            
+            # Add results to the DataFrame
+            bulk_df['Predicted_Sentiment'] = predictions
+
+        st.success("Analysis Complete!")
+        st.dataframe(bulk_df.head()) # Show a preview
+
+        # 3. Download Button
+        csv_buffer = io.StringIO()
+        bulk_df.to_csv(csv_buffer, index=False)
+        csv_data = csv_buffer.getvalue().encode('utf-8')
+        
+        st.download_button(
+            label="⬇️ Download Labeled CSV",
+            data=csv_data,
+            file_name='analyzed_political_tweets.csv',
+            mime='text/csv',
+            use_container_width=True
+        )
+
+st.markdown("---")
+
+
+# ==============================================================
+# 3. POLITICAL INFORMATION CHATBOT (Gemini-Powered)
+# ==============================================================
+
+st.header("3. Political Information Chatbot (LLM-Powered)")
+st.markdown("Ask general political questions or current event summaries — powered by **Google Gemini**.")
+
+# Sidebar Debug Info (for easy troubleshooting)
+with st.sidebar.expander("🔧 Gemini Debug Info"):
+    st.write({
+        "HAVE_GENAI": HAVE_GENAI,
+        "GEMINI_KEY_FOUND": bool(GEMINI_KEY),
+        "CHAT_ENABLED": CHAT_ENABLED
+    })
+
+# Debug info moved to the top of the chatbot section for visibility
+st.info(f"🔧 Debug: SDK available: {HAVE_GENAI}, API key found: {bool(GEMINI_KEY)}, Chat enabled: {CHAT_ENABLED}")
+
+
+# Handle Chat UI
+if not CHAT_ENABLED:
+    st.error("🚫 Gemini Chatbot is disabled.")
+    st.info("Make sure you have installed `google-generativeai` and set your API key before running Streamlit.")
+    st.caption("Example:\n`export GEMINI_API_KEY=your_api_key_here` (Linux/macOS)\n`setx GEMINI_API_KEY \"your_api_key_here\"` (Windows)")
+else:
+    # Initialize chat history in session
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+
+    # Display chat history (persistent across reruns)
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    # Input from user
+    if prompt := st.chat_input("💬 Ask a political question..."):
+        # Show user message
+        st.chat_message("user").markdown(prompt)
+        st.session_state.messages.append({"role": "user", "content": prompt})
+
+        # Get response from Gemini
+        with st.chat_message("assistant"):
+            with st.spinner("🤔 Thinking politically..."):
+                full_response = call_gemini_chat(prompt)
+                st.markdown(full_response)
+        st.session_state.messages.append({"role": "assistant", "content": full_response})
+
+st.markdown("---")
+
+
+
+# ==============================================================
+# 4. MODEL PERFORMANCE AND DATA EXPLORER
+# ==============================================================
+st.header("4. Model Performance and Data Explorer")
+st.markdown("Review the performance of the trained **Logistic Regression** model and explore the source data.")
+
+# -----------------
+# 4.1 Performance Metrics
+# -----------------
+with st.expander("Model Metrics and Classification Report"):
+    # Re-predict on a sample of the full dataset (for metrics display only)
+    sample_df = data.sample(min(500, len(data)), random_state=42)
+    X_sample_vec = vectorizer.transform(sample_df[TWEET_COLUMN].apply(clean_and_stem))
+    y_true = sample_df[LABEL_COLUMN]
+    y_pred_sample = model.predict(X_sample_vec)
+    
+    acc = accuracy_score(y_true, y_pred_sample)
+    
+    st.markdown(f"**Overall Accuracy (Sample):** `{acc:.4f}`")
+    st.text("Classification Report (Sample Data):")
+    st.code(classification_report(y_true, y_pred_sample, labels=LABELS))
+    
+    # 4.2 Confusion Matrix Visualization
+    cm = confusion_matrix(y_true, y_pred_sample, labels=LABELS)
+    fig, ax = plt.subplots(figsize=(6, 5))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
+                xticklabels=LABELS, yticklabels=LABELS, ax=ax)
+    ax.set_title("Confusion Matrix")
+    ax.set_ylabel("True Label")
+    ax.set_xlabel("Predicted Label")
+    st.pyplot(fig)
+    
+# -----------------
+# 4.3 Prediction Distribution
+# -----------------
+st.subheader("Sentiment Distribution in Sample Data")
+col1, col2 = st.columns(2)
+
+with col1:
+    st.caption("True Labels Distribution")
+    fig, ax = plt.subplots()
+    y_true.value_counts().plot(kind='bar', color=['skyblue', 'salmon', 'lightgreen'], ax=ax)
+    ax.set_title("True Label Count")
+    ax.tick_params(axis='x', rotation=0)
+    st.pyplot(fig)
+    
+with col2:
+    st.caption("Model Prediction Distribution")
+    fig, ax = plt.subplots()
+    pd.Series(y_pred_sample).value_counts().plot(kind='bar', color=['skyblue', 'salmon', 'lightgreen'], ax=ax)
+    ax.set_title("Predicted Label Count")
+    ax.tick_params(axis='x', rotation=0)
+    st.pyplot(fig)
+
+st.markdown("---")
+
+# -----------------
+# 4.4 Data Explorer
+# -----------------
+st.subheader("Data Explorer")
+st.markdown("Explore the labeled data used to train the model.")
+
+# Display a sample of the labeled data
+st.dataframe(data.head(20))
+
+if st.button("Display Predictions on Full Dataset Sample", key="full_pred"):
+    st.info("Calculating predictions for a large sample of the dataset. This may take a moment.")
+    
+    # Predict on a larger sample to show context
+    large_sample_df = data.sample(min(1000, len(data)), random_state=42)
+
+    X_full_vec = vectorizer.transform(large_sample_df[TWEET_COLUMN].apply(clean_and_stem))
+    y_pred_full = model.predict(X_full_vec)
+    
+    result_df = large_sample_df.copy()
+    result_df['Model_Prediction'] = y_pred_full
+    
+    st.dataframe(result_df)
