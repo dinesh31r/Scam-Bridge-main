@@ -1,0 +1,17 @@
+Policy Notes Knowledge Base
+===========================
+
+Purpose
+- Collect short, neutral summaries of policy briefs and official releases.
+
+1) Bills, Acts, and policy summaries (PRS India)
+- Source URL: https://prsindia.org/
+- Retrieved date: 2026-02-04
+- Summary:
+  - PRS India provides non-partisan legislative research and policy analysis.
+  - The site organizes content around Bills & Acts, Parliament, and Policy topics.
+  - It offers bill summaries, legislative tracking, and policy briefs intended for public understanding.
+
+Notes
+- Keep each item compact.
+- Cite the source URL for every entry.

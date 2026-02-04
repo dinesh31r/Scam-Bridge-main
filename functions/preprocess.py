@@ -22,7 +22,7 @@ def clean_and_stem(text):
     """
     if pd.isna(text) or text is None:
         return ""
-        
+
     text = str(text)
 
     # 1. Remove URLs (http/https)

@@ -3,7 +3,7 @@ pandas
 scikit-learn
 numpy
 nltk
+textblob
 torch
 transformers
-google-genai
-openai
+groq

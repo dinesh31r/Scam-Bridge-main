@@ -1,0 +1,28 @@
+India Elections Knowledge Base
+==============================
+
+Purpose
+- Store concise, factual notes about Indian elections from official sources (ECI, results portal, etc.).
+- Keep each entry short and dated so updates are easy.
+
+1) Election Commission of India (ECI) guidance
+- Source URL: https://www.eci.gov.in/mythvsreality/
+- Retrieved date: 2026-02-04
+- Summary:
+  - The Myth vs Reality Register is a repository of debunked election-related misinformation and aims to counter false narratives during election periods.
+  - It is intended for public and media use to verify information and promote transparency and responsible communication.
+  - The register is updated periodically as new claims are verified.
+  - The ECI is a constitutional authority responsible for administering elections to the Lok Sabha, Rajya Sabha, State Legislative Assemblies, and the offices of President and Vice President.
+
+2) Results portal privacy policy
+- Source URL: https://results.eci.gov.in/privacy/index.html
+- Retrieved date: 2026-02-04
+- Summary:
+  - The service states that, as a general rule, it does not collect personal information unless users provide it for a specific purpose.
+  - Personally identifiable information volunteered on the application is not shared with third parties, and security measures are described.
+  - Cookies are used for session, preference, and security purposes; users can refuse cookies with possible loss of functionality.
+  - Data may be transferred to and processed in India, and the policy describes disclosure limits and security caveats.
+
+Notes
+- Prefer quoting only short excerpts; summarize in your own words.
+- Keep political neutrality and focus on process, rules, and official information.

@@ -1,94 +1,193 @@
-🗳️ Political Sentiment Analysis Hub (aka "Scam Bridge-Analytica")
+# 🗳️ Political Sentiment Analysis Hub (Scam Bridge Analytica)
 
-This project is a full-stack, Python-based web application designed to analyze political sentiment from text data. It transforms raw, unstructured tweets into actionable insights using a custom-trained machine learning model and provides real-time contextual information through an integrated LLM chatbot.
+A Streamlit web app for political sentiment analysis and contextual Q&A. It supports **two sentiment engines** (TextBlob and Logistic Regression), **bulk CSV analysis**, and a **Groq-powered chatbot** with optional **RAG (Retrieval-Augmented Generation)** over local knowledge-base files.
 
-The project is built using Streamlit, Scikit-learn, and the Google Gemini API.
+---
 
+## ✨ Features
 
-Features
+- **Real-Time Sentiment Analysis**
+  - Choose between **TextBlob** (polarity score) and **Logistic Regression** (confidence score).
 
-    📈 Real-Time Sentiment Analysis: A tool to classify the sentiment (Positive, Negative, or Neutral) of any text input in real-time using a trained Logistic Regression model.
+- **Bulk CSV Analysis**
+  - Upload a CSV, select a text column, and download labeled output.
 
-    📁 Bulk CSV Analysis: A feature to upload an entire CSV file of tweets, analyze the sentiment for every row, and download the newly enriched dataset.
+- **LLM Chatbot (Groq)**
+  - Ask political questions; responses can be grounded in your local knowledge base.
 
-    🤖 AI-Powered Political Chatbot: An integrated chatbot (powered by the Google Gemini API) to answer factual, general-knowledge questions about politics, providing context to the sentiment analysis.
+- **RAG + Citations**
+  - Sources are shown per response based on matching knowledge-base documents.
 
-    📊 Model Performance Dashboard: A section displaying the model's performance metrics (Classification Report, Confusion Matrix) on a test set, providing transparency into its accuracy.
+- **Local Chat History**
+  - Stores up to 200 chats in a local SQLite database.
 
-⚙️ How It Works: Architecture
+- **Config Panel (Sidebar)**
+  - Groq API key override, cache toggle, RAG toggle, rate-limit control.
 
-This project uses a "Teacher-Student" ML pipeline and a modular application architecture.
+---
 
-1. The Machine Learning Pipeline
+## 🧱 Tech Stack
 
-Because we started with no labeled data, we first created a pipeline to generate our own training set.
+- **Frontend**: Streamlit
+- **ML**: Scikit-learn (Logistic Regression, TF-IDF), Pandas, NLTK
+- **Chatbot**: Groq (LLM API)
+- **RAG Index**: TF-IDF + cosine similarity
+- **Storage**: SQLite (chat history)
+- **Python**: 3.9+
 
-    "Teacher" Model (Auto-Labeling): The functions/label_data.py script uses a powerful Zero-Shot Classification model (from Hugging Face Transformers) to automatically label thousands of raw tweets as positive, negative, or neutral.
+---
 
-    "Student" Model (Final Classifier): The functions/model_trainer.py script trains a much faster, lightweight Logistic Regression model on the data labeled by the "teacher." This "student" model is the one deployed in the final app.
+## 📂 Project Structure (Key Files)
 
-2. Application Architecture
+- `app.py` — Streamlit UI + app logic
+- `functions/preprocess.py` — text cleaning
+- `functions/model_trainer.py` — trains the Logistic Regression model
+- `models/` — model artifacts (`final_model.pkl`, `vectorizer.pkl`)
+- `data/` — CSV datasets + chat DB
+- `data/knowledge_base/` — RAG source files (`.txt`, `.md`)
 
-    Frontend: A single-page Streamlit application (app.py).
+---
 
-    ML Backend: The trained Logistic Regression model (final_model.pkl) and the fitted TfidfVectorizer (vectorizer.pkl) are loaded into the app's memory using st.cache_resource for high-speed predictions.
+## 🚀 Quick Start
 
-    External API: The Google Gemini API is called for the chatbot feature, acting as an independent, external service.
+### 1) Create & activate venv
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
 
-🛠️ Technology Stack
+### 2) Install dependencies
+```bash
+pip install -r requirements.txt
+```
 
-    Frontend: Streamlit
+### 3) (Optional) Set Groq API Key
+```bash
+export GROQ_API_KEY=your_key_here
+```
 
-    ML & Data Processing: Scikit-learn (Logistic Regression, TF-IDF), Pandas, NLTK
+### 4) Run the app
+```bash
+streamlit run app.py
+```
 
-    Auto-Labeling (Teacher Model): Hugging Face transformers
+App opens at: `http://localhost:8501`
 
-    Chatbot: Google Gemini API (google-genai)
+---
 
-    Core: Python 3.9+
+## 🧠 Sentiment Engines
 
-📂 Project Structure
+### TextBlob (Polarity)
+- Uses lexicon-based scoring.
+- Outputs **Polarity Score** in range `[-1, 1]`.
 
-🚀 How to Run This Project Locally
+### Logistic Regression (Confidence)
+- Uses a trained model and TF-IDF vectorizer.
+- Outputs **Confidence** in range `[0, 1]`.
 
-1. Prerequisites
+If you select Logistic Regression and artifacts are missing, you must train the model first (below).
 
-    Python 3.9+
+---
 
-    A Google Gemini API Key.
+## 🧪 Train the Logistic Regression Model
 
-2. Setup and Installation
+You must train the model once if `models/final_model.pkl` and `models/vectorizer.pkl` do not exist.
 
-    Clone the repository:
+### Required input
+Place your **raw tweets CSV** here:
+```
+data/political_tweets.csv
+```
 
-    Create and activate a virtual environment:
+### 1) Auto-label tweets (Teacher Model)
+```bash
+python functions/label_data.py
+```
 
-    Install dependencies:
+### 2) Train the student model
+```bash
+python functions/model_trainer.py
+```
 
-    Set your Gemini API Key: (This key is only loaded in your current terminal session and is never saved in the code.)
+This generates:
+- `data/labeled_political_tweets.csv`
+- `models/final_model.pkl`
+- `models/vectorizer.pkl`
 
-3. Run the Project
+---
 
-You must first train the model, then run the app.
+## 📚 RAG Knowledge Base
 
-    Run the ML Pipeline (One-Time Setup):
+Add `.txt` or `.md` files here:
+```
+data/knowledge_base/
+```
 
-        Place your raw, unlabeled tweet CSV in the data/ folder and name it political_tweets.csv.
+Example:
+```bash
+mkdir -p data/knowledge_base
+printf "ECI election FAQ..." > data/knowledge_base/elections.txt
+```
 
-        Step 1: Auto-label the data (The "Teacher")
+When **Use Knowledge Base (RAG)** is enabled in the sidebar:
+- The app indexes your documents
+- Retrieves top‑K relevant sources
+- Passes them to Groq
+- Displays source file names under each response
 
-        Step 2: Train the model (The "Student")
+---
 
-    (You should now have labeled_political_tweets.csv, final_model.pkl, and vectorizer.pkl)
+## ⚙️ Sidebar Controls
 
-    Run the Streamlit App: (Make sure you are in the same terminal where you set your API key)
+- **Groq API Key override** (session only)
+- **Use Knowledge Base (RAG)**
+- **Top Sources** (Top‑K docs)
+- **Cache Answers**
+- **Max Requests / Minute** (rate limiting)
+- **Clear Chat History**
 
-The app will open in your browser at http://localhost:8501.
+---
 
-🌟 Future Improvements
+## 🗃️ Local Chat History
 
-    Microservice Architecture: Decouple the ML model from the Streamlit app by deploying it as a separate FastAPI service for true scalability.
+Chats are stored in:
+```
+data/chat_history.db
+```
 
-    Improve Model: Replace Stemming with Lemmatization and implement N-grams (ngram_range=(1, 2)) to capture context like "not good."
+Up to the latest **200 chats** are retained. You can clear history from the sidebar.
 
-    Chatbot RAG: Enhance the chatbot by implementing a Retrieval-Augmented Generation (RAG) pipeline to have it answer questions based on a trusted set of documents.
+---
+
+## ✅ Tips & Troubleshooting
+
+- **Missing TextBlob**:
+  ```bash
+  pip install textblob
+  ```
+
+- **Missing Groq**:
+  ```bash
+  pip install groq
+  ```
+
+- **Model not found**:
+  Run the model training steps above.
+
+- **RAG not working**:
+  Ensure `data/knowledge_base/` has `.txt` or `.md` files.
+
+---
+
+## 🌟 Future Improvements (Ideas)
+
+- Use embeddings-based retrieval (FAISS / sentence-transformers)
+- Add citation links with snippet previews
+- Add admin UI for knowledge-base uploads
+- Deploy as a microservice (FastAPI + Streamlit frontend)
+
+---
+
+## 📄 License
+
+Specify your license here (MIT / Apache / etc.)
