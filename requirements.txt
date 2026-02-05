@@ -7,3 +7,5 @@ textblob
 torch
 transformers
 groq
+python-dotenv
+tavily-python

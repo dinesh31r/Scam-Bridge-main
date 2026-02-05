@@ -184,8 +184,12 @@ Purpose: orchestrates UI, sentiment engines, chat, RAG, and storage.
 3. If RAG enabled:
    - Retrieve relevant KB docs
 4. Build prompt (system + context + question)
-5. Groq API returns answer
-6. Sources (filenames) shown under answer
+5. If Groq API key missing:
+   - Show warning: "Groq chatbot disabled (API key not found)."
+   - Skip API call
+6. Else:
+   - Groq API returns answer
+   - Sources (filenames) shown under answer
 
 ---
 

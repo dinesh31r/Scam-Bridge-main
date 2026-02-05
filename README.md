@@ -62,6 +62,18 @@ pip install -r requirements.txt
 ```
 
 ### 3) (Optional) Set Groq API Key
+**Option A: Use a .env file (recommended)**
+1. Create `.env` from the example:
+```bash
+cp .env.example .env
+```
+2. Put your key in `.env`:
+```bash
+GROQ_API_KEY=your_key_here
+TAVILY_API_KEY=your_key_here
+```
+
+**Option B: Export in your shell**
 ```bash
 export GROQ_API_KEY=your_key_here
 ```

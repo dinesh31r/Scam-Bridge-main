@@ -4,12 +4,17 @@ import streamlit as st
 import pandas as pd
 from textblob import TextBlob
 from groq import Groq
+from dotenv import load_dotenv
 from functions.preprocess import clean_and_stem
 import sqlite3
 from datetime import datetime
 import json
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+try:
+    from tavily import TavilyClient
+except ImportError:
+    TavilyClient = None
 
 # ----------------------------------
 # Page Config
@@ -20,42 +25,50 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Load .env if present (e.g., GROQ_API_KEY)
+load_dotenv()
+
 # ----------------------------------
 # Global UI Style (Space Grey Glassmorphism)
 # ----------------------------------
 st.markdown(
     """
     <style>
+    @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
     :root {
-        --bg: #f7f7f7;
-        --bg-2: #ffffff;
-        --glass: rgba(255, 255, 255, 0.95);
-        --glass-2: rgba(255, 255, 255, 1);
-        --border: rgba(0, 0, 0, 0.08);
-        --text: #111111;
-        --muted: #6b6f76;
-        --accent: #0b5fff;
-        --accent-2: #eef1f6;
-        --accent-3: #1e6bff;
+        --bg: #f4f7fb;
+        --bg-2: #eef3fb;
+        --panel: #ffffff;
+        --panel-2: #f6f8fc;
+        --border: rgba(100, 116, 139, 0.2);
+        --text: #0f172a;
+        --muted: #64748b;
+        --accent: #5b76ff;
+        --accent-2: #e8edff;
+        --accent-3: #4f6dff;
+        --success: #16a34a;
     }
 
     html, body, [class*="stApp"] {
-        background: linear-gradient(180deg, #ffffff 0%, #f3f4f6 100%) fixed;
+        background: radial-gradient(1200px 500px at 70% -5%, rgba(91, 118, 255, 0.12), transparent 60%),
+                    radial-gradient(1000px 600px at 20% 0%, rgba(16, 185, 129, 0.08), transparent 55%),
+                    linear-gradient(180deg, #f8fbff 0%, #eef3fb 100%) fixed;
         color: var(--text);
-        font-family: "SamsungOne", "Samsung One", "SamsungSharpSans", "Segoe UI", Arial, sans-serif;
+        font-family: "Plus Jakarta Sans", "Manrope", "Segoe UI", Arial, sans-serif;
     }
 
     /* Main container */
     .block-container {
-        padding-top: 2.25rem;
+        padding-top: 1.5rem;
         padding-bottom: 3rem;
     }
 
     /* Sidebar */
     section[data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #ffffff 0%, #f7f7f7 100%);
-        border-right: 1px solid var(--border);
-        box-shadow: none;
+        background: #ffffff;
+        border-right: 1px solid rgba(148, 163, 184, 0.2);
+        box-shadow: 8px 0 24px rgba(15, 23, 42, 0.04);
     }
     section[data-testid="stSidebar"] * {
         color: var(--text);
@@ -68,41 +81,43 @@ st.markdown(
 
     /* Glass panels */
     .glass {
-        background: var(--glass);
+        background: var(--panel);
         border: 1px solid var(--border);
-        border-radius: 14px;
+        border-radius: 18px;
         padding: 1.25rem 1.5rem;
-        backdrop-filter: blur(8px);
-        -webkit-backdrop-filter: blur(8px);
-        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
+        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
     }
     .card {
-        margin: 1rem 0 1.25rem 0;
+        margin: 1rem 0 1.5rem 0;
     }
 
-    /* Title bar */
-    .hero {
+    /* Top bar */
+    .topbar {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 1rem;
-        padding: 1rem 1.25rem;
-        margin-bottom: 1.25rem;
+        gap: 1.25rem;
+        padding: 0.9rem 1.5rem;
+        margin-bottom: 1.5rem;
+        position: sticky;
+        top: 0.5rem;
+        z-index: 50;
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
     }
-    .hero .title {
-        font-size: 2rem;
+    .topbar .crumbs {
+        font-size: 0.85rem;
+        color: var(--muted);
+        margin-bottom: 0.15rem;
+    }
+    .topbar .title {
+        font-size: 2.1rem;
         font-weight: 800;
+        letter-spacing: 0.2px;
         color: var(--text);
-        letter-spacing: 0.2px;
     }
-    .hero .pill {
-        background: rgba(11, 95, 255, 0.1);
-        border: 1px solid rgba(11, 95, 255, 0.35);
-        color: #0b5fff;
-        border-radius: 999px;
-        padding: 0.25rem 0.75rem;
-        font-size: 0.8rem;
-        letter-spacing: 0.2px;
+    .top-actions {
+        display: none;
     }
 
     /* Sidebar nav emphasis */
@@ -121,31 +136,45 @@ st.markdown(
     }
 
     /* Inputs */
-    .stTextInput input, .stTextArea textarea, .stSelectbox div[data-baseweb="select"] {
-        background: var(--glass-2);
+    .stTextInput input,
+    .stTextArea textarea,
+    .stSelectbox div[data-baseweb="select"],
+    .stNumberInput input {
+        background: var(--panel);
         color: var(--text);
         border-radius: 12px;
-        border: 1px solid var(--border);
-        box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.04);
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        box-shadow: 0 6px 16px rgba(15, 23, 42, 0.04);
+        caret-color: var(--text);
+    }
+    .stTextInput input::placeholder,
+    .stTextArea textarea::placeholder,
+    .stNumberInput input::placeholder {
+        color: rgba(100, 116, 139, 0.8);
+    }
+
+    /* Ensure labels and small text remain readable */
+    label, .stMarkdown, .stCaption, .stSlider label, .stSelectbox label {
+        color: var(--text);
     }
 
     /* Buttons */
     .stButton button {
-        background: linear-gradient(180deg, #0b5fff 0%, #1e6bff 100%);
+        background: linear-gradient(180deg, #5b76ff 0%, #4f6dff 100%);
         color: #ffffff;
-        border: 1px solid rgba(11, 95, 255, 0.7);
+        border: 1px solid rgba(91, 118, 255, 0.7);
         border-radius: 12px;
         padding: 0.5rem 1rem;
         transition: transform 0.06s ease, box-shadow 0.2s ease;
     }
     .stButton button:hover {
-        box-shadow: 0 8px 20px rgba(11, 95, 255, 0.25);
+        box-shadow: 0 10px 26px rgba(91, 118, 255, 0.25);
         transform: translateY(-1px);
     }
 
     /* Dataframes */
     .stDataFrame, .stTable {
-        background: var(--glass-2);
+        background: var(--panel);
         border-radius: 12px;
         border: 1px solid var(--border);
     }
@@ -153,6 +182,88 @@ st.markdown(
     /* Divider */
     hr {
         border-color: var(--border);
+    }
+
+    .sidebar-brand {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.25rem 0.2rem 0.75rem 0.2rem;
+    }
+    .sidebar-logo {
+        width: 36px;
+        height: 36px;
+        border-radius: 12px;
+        background: #0f172a;
+        color: #ffffff;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+    }
+    .sidebar-title {
+        font-weight: 800;
+        font-size: 1.2rem;
+    }
+    .sidebar-section {
+        background: #eef2ff;
+        border: 1px solid rgba(91, 118, 255, 0.2);
+        border-radius: 10px;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.85rem;
+        color: #4f6dff;
+        margin-bottom: 0.75rem;
+    }
+    .sidebar-nav {
+        display: grid;
+        gap: 0.35rem;
+        margin-bottom: 1rem;
+    }
+    .sidebar-nav .nav-item {
+        padding: 0.45rem 0.6rem;
+        border-radius: 8px;
+        color: var(--muted);
+        font-size: 0.9rem;
+    }
+    .sidebar-nav .nav-item.active {
+        color: var(--text);
+        background: #f1f5ff;
+        border: 1px solid rgba(91, 118, 255, 0.15);
+    }
+
+    .section-card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        padding: 1.25rem 1.5rem;
+        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+        margin-bottom: 1.5rem;
+    }
+
+    .chat-card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 0.9rem 1.1rem;
+        margin: 0.6rem 0 0.9rem 0;
+        box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+    }
+    .chat-meta {
+        font-size: 0.8rem;
+        color: var(--muted);
+        margin-top: 0.4rem;
+    }
+    .chat-divider {
+        height: 1px;
+        background: rgba(148, 163, 184, 0.25);
+        margin: 0.6rem 0;
+        border: none;
+    }
+
+    /* Metric readability */
+    .stMetric label, .stMetric div {
+        color: var(--text) !important;
     }
     </style>
     """,
@@ -163,6 +274,7 @@ st.markdown(
 # Groq API Setup
 # ----------------------------------
 GROQ_API_KEY_ENV = os.getenv("GROQ_API_KEY")
+TAVILY_API_KEY_ENV = os.getenv("TAVILY_API_KEY")
 
 def get_active_groq_key():
     override = st.session_state.get("groq_api_key_override", "").strip()
@@ -173,6 +285,13 @@ def get_groq_client():
     if not api_key:
         return None
     return Groq(api_key=api_key)
+
+def get_tavily_client():
+    if TavilyClient is None:
+        return None
+    if not TAVILY_API_KEY_ENV:
+        return None
+    return TavilyClient(api_key=TAVILY_API_KEY_ENV)
 
 # ----------------------------------
 # Session State
@@ -401,9 +520,36 @@ def retrieve_context(query, docs, vectorizer, matrix, top_k=3):
     return sources, "\n\n".join(context_parts)
 
 
-def get_llm_response_with_rag(query, use_rag, top_k, use_cache):
+def retrieve_web_context(query, max_results=3):
+    client = get_tavily_client()
+    if not client:
+        return [], ""
+    try:
+        response = client.search(
+            query=query,
+            max_results=max_results,
+            include_answer=False,
+            include_images=False
+        )
+    except Exception:
+        return [], ""
+
+    results = response.get("results", []) if isinstance(response, dict) else []
+    sources = []
+    context_parts = []
+    for r in results:
+        title = r.get("title") or "Untitled Source"
+        content = (r.get("content") or "").strip()
+        if not content:
+            continue
+        sources.append(f"web: {title}")
+        context_parts.append(f"[{title}]\n{content[:800]}")
+    return sources, "\n\n".join(context_parts)
+
+
+def get_llm_response_with_rag(query, use_rag, top_k, use_cache, use_web, web_k):
     cache = st.session_state.setdefault("llm_cache", {})
-    cache_key = f"{query}|rag={use_rag}|k={top_k}"
+    cache_key = f"{query}|rag={use_rag}|k={top_k}|web={use_web}|wk={web_k}"
     if use_cache and cache_key in cache:
         return cache[cache_key]["response"], cache[cache_key]["sources"]
 
@@ -413,6 +559,12 @@ def get_llm_response_with_rag(query, use_rag, top_k, use_cache):
         docs = load_kb_documents()
         vectorizer, matrix = build_kb_index(docs)
         sources, context_block = retrieve_context(query, docs, vectorizer, matrix, top_k=top_k)
+
+    if use_web:
+        web_sources, web_context = retrieve_web_context(query, max_results=web_k)
+        sources.extend(web_sources)
+        if web_context:
+            context_block = f"{context_block}\n\n{web_context}".strip()
 
     system_prompt = (
         "You are a factual, neutral political information assistant. "
@@ -454,6 +606,19 @@ def call_groq_llm_with_system(system_prompt, prompt):
 # Sidebar Debug (optional)
 # ----------------------------------
 with st.sidebar:
+    st.markdown(
+        """
+        <div class="sidebar-brand">
+          <div class="sidebar-logo">SB</div>
+          <div class="sidebar-title">Scam-Bridge Analytica</div>
+        </div>
+        <div class="sidebar-section">Workspace</div>
+        <div class="sidebar-nav">
+          <div class="nav-item active">Overview</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
     st.markdown("### ⚙️ Settings")
     st.text_input(
         "Groq API Key (optional override)",
@@ -473,6 +638,8 @@ with st.sidebar:
     st.markdown("### 📚 Chat Settings")
     use_rag = st.toggle("Use Knowledge Base (RAG)", value=True)
     top_k = st.slider("Top Sources", min_value=1, max_value=5, value=3)
+    use_web = st.toggle("Use Web Search (Tavily)", value=False)
+    web_k = st.slider("Web Results", min_value=1, max_value=5, value=3)
     use_cache = st.toggle("Cache Answers", value=True)
     rate_limit = st.number_input("Max Requests / Minute", min_value=1, max_value=60, value=10, step=1)
 
@@ -480,8 +647,10 @@ with st.sidebar:
     if show_debug:
         st.json({
             "GROQ_API_KEY_FOUND": bool(get_active_groq_key()),
+            "TAVILY_API_KEY_FOUND": bool(TAVILY_API_KEY_ENV),
             "CHAT_HISTORY_LENGTH": len(st.session_state.chat_history),
             "RAG_ENABLED": use_rag,
+            "WEB_SEARCH_ENABLED": use_web,
             "KB_DOC_COUNT": len(load_kb_documents())
         })
 
@@ -490,9 +659,11 @@ with st.sidebar:
 # ----------------------------------
 st.markdown(
     """
-    <div class="glass hero">
-      <div class="title">Scam Bridge Analytica</div>
-      <div class="pill">Sentiment & RAG Dashboard</div>
+    <div class="glass topbar">
+      <div>
+        <div class="crumbs">Pages / Overview</div>
+        <div class="title">Overview</div>
+      </div>
     </div>
     """,
     unsafe_allow_html=True
@@ -518,9 +689,9 @@ if not st.session_state.chat_loaded:
     st.session_state.chat_loaded = True
 
 # ======================================================
-# 1. TEXT SENTIMENT ANALYSIS
+# 1 + 2. OVERVIEW CARDS (FULL WIDTH)
 # ======================================================
-st.markdown('<div class="glass card">', unsafe_allow_html=True)
+st.markdown('<div class="section-card">', unsafe_allow_html=True)
 st.markdown("## 1. Text Sentiment Analysis")
 
 text_input = st.text_area("Enter text to analyze sentiment")
@@ -546,14 +717,10 @@ if st.button("Analyze Sentiment"):
 st.divider()
 st.markdown("</div>", unsafe_allow_html=True)
 
-# ======================================================
-# 2. BULK CSV SENTIMENT ANALYSIS
-# ======================================================
-st.markdown('<div class="glass card">', unsafe_allow_html=True)
+st.markdown('<div class="section-card">', unsafe_allow_html=True)
 st.markdown("## 2. Bulk CSV Sentiment Analysis")
 
 uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
-
 if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file, encoding="latin-1")
@@ -590,16 +757,21 @@ if uploaded_file:
                 df["Sentiment"] = sentiments
                 df[score_label.replace(" ", "_")] = scores
 
-            st.dataframe(df.head(20))
+            st.markdown("### Results Table")
+            st.dataframe(df, use_container_width=True, height=520)
+
             st.markdown("### Summary")
-            col1, col2 = st.columns(2)
+            st.markdown('<div class="section-card">', unsafe_allow_html=True)
+            col1, col2 = st.columns([1, 2], gap="large")
             with col1:
                 st.metric("Rows Analyzed", len(df))
                 st.metric(score_label, round(float(pd.Series(scores).mean()), 3) if scores else 0.0)
             with col2:
                 sentiment_counts = pd.Series(sentiments).value_counts()
-                st.bar_chart(sentiment_counts)
+                st.bar_chart(sentiment_counts, use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
 
+            st.markdown("### Export")
             st.download_button(
                 "Download Result CSV",
                 df.to_csv(index=False),
@@ -607,7 +779,7 @@ if uploaded_file:
                 "text/csv"
             )
 
-    except Exception as e:
+    except Exception:
         st.error("Error reading CSV file")
 
 st.divider()
@@ -622,17 +794,25 @@ st.markdown("## 3. Political Information Chatbot (LLM-Powered)")
 # RAG status hint
 if use_rag and not load_kb_documents():
     st.info("Knowledge base is empty. Add .txt or .md files to data/knowledge_base to enable RAG sources.")
+if use_web and (TavilyClient is None or not TAVILY_API_KEY_ENV):
+    st.info("Web search is enabled, but Tavily is not configured. Add TAVILY_API_KEY to your .env.")
 
 # Display Chat History
 for chat in st.session_state.chat_history:
+    st.markdown('<div class="chat-card">', unsafe_allow_html=True)
     st.markdown(f"🔴 **User:** {chat['user']}")
     st.markdown(f"🟡 **Bot:** {chat['bot']}")
-    st.markdown(f"🟢 **Sentiment:** {chat['sentiment']} | **Score:** {chat['score']}")
+    st.markdown(
+        f'<div class="chat-meta">🟢 <strong>Sentiment:</strong> {chat["sentiment"]} | '
+        f'<strong>Score:</strong> {chat["score"]}</div>',
+        unsafe_allow_html=True
+    )
     if chat.get("sources"):
+        st.markdown('<hr class="chat-divider" />', unsafe_allow_html=True)
         st.markdown("**Sources:**")
         for src in chat["sources"]:
             st.markdown(f"- {src}")
-    st.markdown("---")
+    st.markdown("</div>", unsafe_allow_html=True)
 
 user_query = st.text_input("Ask a political question:")
 
@@ -646,7 +826,9 @@ if st.button("Send"):
                 user_query,
                 use_rag=use_rag,
                 top_k=top_k,
-                use_cache=use_cache
+                use_cache=use_cache,
+                use_web=use_web,
+                web_k=web_k
             )
             add_to_history(user_query, reply, sentiment, score, sources=sources)
             st.rerun()
